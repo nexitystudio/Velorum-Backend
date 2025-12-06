@@ -25,10 +25,10 @@ def start():
     try:
         from market.scraper import sync_external_products
         
-        # Configurar job de sincronización cada 1 hora
+        # Configurar job de sincronización cada 30 minutos
         scheduler.add_job(
             func=sync_external_products,
-            trigger=IntervalTrigger(hours=1),
+            trigger=IntervalTrigger(minutes=30),
             id='sync_external_products',
             name='Sincronizar productos externos',
             replace_existing=True,
@@ -38,7 +38,7 @@ def start():
         scheduler.start()
         scheduler_started = True
         
-        logger.info("✅ Scheduler iniciado - Sincronización automática cada 1 hora")
+        logger.info("✅ Scheduler iniciado - Sincronización automática cada 30 minutos")
         
     except Exception as e:
         logger.error(f"Error al iniciar scheduler: {str(e)}")

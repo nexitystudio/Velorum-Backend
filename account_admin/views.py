@@ -10,12 +10,14 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from Velorum.permissions import *
 from rest_framework.decorators import api_view, permission_classes
+from market.models import Order
 
 # Create your views here.
 class CreateUserView(APIView):
 
     def post(self, request):
         data = request.data.copy()  # Crear copia mutable para evitar errores
+        order_id = data.pop('order_id', None)  # Extraer order_id si existe
         
         # Si el usuario está autenticado, mantener lógica de roles
         if hasattr(request, 'user') and request.user.is_authenticated:
@@ -40,7 +42,24 @@ class CreateUserView(APIView):
             new_user = serializer.save()
             new_user.set_password(request.data['password'])
             new_user.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+            # Asociar orden si se provee order_id
+            if order_id:
+                try:
+                    order = Order.objects.get(id=order_id, usuario__isnull=True)
+                    order.usuario = new_user
+                    order.save()
+                except Order.DoesNotExist:
+                    pass  # La orden no existe o ya tiene usuario asignado
+            
+            # Generar tokens JWT para auto-login
+            refresh = RefreshToken.for_user(new_user)
+            
+            return Response({
+                'user': serializer.data,
+                'access': str(refresh.access_token),
+                'refresh': str(refresh)
+            }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ChangeRoleView(APIView):

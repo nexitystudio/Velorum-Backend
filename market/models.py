@@ -117,6 +117,12 @@ class Order(models.Model):
     direccion_envio = models.TextField(blank=True, default='')
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     
+    # Datos del invitado (si no está autenticado)
+    email_invitado = models.EmailField(max_length=254, null=True, blank=True)
+    nombre_invitado = models.CharField(max_length=200, null=True, blank=True)
+    apellido_invitado = models.CharField(max_length=200, null=True, blank=True)
+    telefono_invitado = models.CharField(max_length=20, null=True, blank=True)
+    
     # Datos adicionales de envío y pago
     costo_envio = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     codigo_postal = models.CharField(max_length=10, blank=True, default='')

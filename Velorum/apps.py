@@ -15,10 +15,17 @@ class VelorumConfig(AppConfig):
         """
         import os
         
-        # Solo iniciar scheduler en el proceso principal, no en reloads
-        if os.environ.get('RUN_MAIN') == 'true':
+        # Iniciar scheduler:
+        # - En desarrollo (runserver): solo cuando RUN_MAIN=true (evita duplicados en auto-reload)
+        # - En producción (gunicorn/otros): siempre (RUN_MAIN no existe)
+        run_main = os.environ.get('RUN_MAIN')
+        is_production = run_main is None  # gunicorn no setea RUN_MAIN
+        is_dev_main = run_main == 'true'  # runserver proceso principal
+        
+        if is_production or is_dev_main:
             try:
                 from . import scheduler
                 scheduler.start()
+                print("✅ Scheduler iniciado correctamente")
             except Exception as e:
-                print(f"Error al iniciar scheduler: {e}")
+                print(f"❌ Error al iniciar scheduler: {e}")

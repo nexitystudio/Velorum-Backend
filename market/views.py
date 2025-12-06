@@ -3,7 +3,7 @@ from rest_framework import viewsets, status
 from .serializer import *
 from .models import *
 from Velorum.permissions import *
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
@@ -47,6 +47,12 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Permite filtrar productos por nombre, categoría o precio"""
         queryset = Product.objects.all()
+        
+        # Si el usuario no es admin/operator, ocultar productos desactivados
+        user = self.request.user
+        if not (hasattr(user, 'role') and user.role in ['admin', 'operator']):
+            queryset = queryset.filter(desactivado=False)
+        
         nombre = self.request.query_params.get('nombre', None)
         categoria = self.request.query_params.get('categoria', None)
         precio_min = self.request.query_params.get('precio_min', None)
@@ -179,6 +185,27 @@ class ProductViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': f'Error al resetear precio: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminOrOperator])
+    def toggle_visibility(self, request, pk=None):
+        """Activa o desactiva la visibilidad de un producto"""
+        try:
+            producto = self.get_object()
+            producto.desactivado = not producto.desactivado
+            producto.save()
+            
+            estado = 'oculto' if producto.desactivado else 'visible'
+            
+            return Response({
+                'mensaje': f'Producto {estado} exitosamente',
+                'producto_id': producto.id,
+                'desactivado': producto.desactivado
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Error al cambiar visibilidad: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class CodigoDescuentoViewSet(viewsets.ModelViewSet):
     """
@@ -231,8 +258,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         Procesa los detalles de la orden si se proporcionan.
         """
         user = self.request.user
+        # Usar dirección del body si existe, sino usar la del usuario
+        direccion = serializer.validated_data.get('direccion_envio') or user.address
         # Asignar el usuario actual como dueño de la orden
-        orden = serializer.save(usuario=user, direccion_envio=user.address)
+        orden = serializer.save(usuario=user, direccion_envio=direccion)
         # Recalcular el total de la orden en base a los detalles
         orden.total_update()
         
@@ -1026,13 +1055,18 @@ def create_mp_preference(request):
         
         # Crear orden con todos los datos de envío y pago
         order_data = {
-            'usuario': request.user.username if request.user.is_authenticated else None,
+            'usuario': request.user if request.user.is_authenticated else None,
             'direccion_envio': direccion_completa,
             'estado': 'pendiente',
             'costo_envio': costo_envio,
             'codigo_postal': shipping_data.get('codigo_postal', ''),
             'zona_envio': shipping_data.get('zona', ''),
             'metodo_pago': 'Mercado Pago',
+            # Datos del invitado
+            'email_invitado': customer_data.get('email') if not request.user.is_authenticated else None,
+            'nombre_invitado': customer_data.get('nombre') if not request.user.is_authenticated else None,
+            'apellido_invitado': customer_data.get('apellido') if not request.user.is_authenticated else None,
+            'telefono_invitado': customer_data.get('telefono_contacto') if not request.user.is_authenticated else None,
             'detalles_input': [{
                 'watch_id': item.get('watch_id') or item.get('id_backend') or item.get('id'),
                 'cantidad': item.get('quantity', 1),
@@ -1259,6 +1293,11 @@ def validate_checkout_access(request):
                 'total': order.total,
                 'estado': order.estado,
                 'usuario': order.usuario.username if order.usuario else 'Invitado',
+                'email': order.usuario.email if order.usuario else order.email_invitado,
+                'email_invitado': order.email_invitado,
+                'nombre_invitado': order.nombre_invitado,
+                'apellido_invitado': order.apellido_invitado,
+                'telefono_invitado': order.telefono_invitado,
                 'productos': list(order.detalles.values(
                     'producto__nombre',
                     'cantidad',
@@ -1279,3 +1318,93 @@ def validate_checkout_access(request):
             'error': 'Error al validar el acceso'
         }, status=500)
 
+
+@api_view(['PATCH'])
+@permission_classes([IsAdminUser])
+def update_product_price(request, pk):
+    """Actualiza el precio de un producto individualmente"""
+    try:
+        producto = Product.objects.get(pk=pk)
+        nuevo_precio = request.data.get('precio')
+        
+        if nuevo_precio is None:
+            return Response({
+                'error': 'Debes proporcionar un precio'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        producto.precio = float(nuevo_precio)
+        producto.precio_manual = True  # Marcar como precio editado manualmente
+        producto.save()
+        
+        return Response({
+            'mensaje': 'Precio actualizado correctamente',
+            'producto_id': producto.id,
+            'precio_nuevo': float(producto.precio)
+        }, status=status.HTTP_200_OK)
+        
+    except Product.DoesNotExist:
+        return Response({
+            'error': 'Producto no encontrado'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': f'Error al actualizar precio: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def reset_stock_vendido(request, pk):
+    """Resetea el stock vendido de un producto a 0"""
+    try:
+        producto = Product.objects.get(pk=pk)
+        producto.stock_vendido = 0
+        producto.save()
+        
+        return Response({
+            'mensaje': 'Stock vendido reseteado correctamente',
+            'producto_id': producto.id,
+            'stock_vendido': producto.stock_vendido
+        }, status=status.HTTP_200_OK)
+        
+    except Product.DoesNotExist:
+        return Response({
+            'error': 'Producto no encontrado'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': f'Error al resetear stock: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def bulk_update_markup(request):
+    """Actualiza el markup (margen) de múltiples productos"""
+    try:
+        markup = request.data.get('markup', 2.0)  # Por defecto 100% de margen (x2)
+        producto_ids = request.data.get('producto_ids', [])
+        
+        if not producto_ids:
+            # Si no se especifican IDs, aplicar a todos los productos
+            productos = Product.objects.filter(precio_proveedor__isnull=False)
+        else:
+            productos = Product.objects.filter(id__in=producto_ids, precio_proveedor__isnull=False)
+        
+        actualizados = 0
+        for producto in productos:
+            producto.precio = producto.precio_proveedor * float(markup)
+            producto.precio_manual = False
+            producto.save()
+            actualizados += 1
+        
+        return Response({
+            'mensaje': f'{actualizados} productos actualizados',
+            'actualizados': actualizados,
+            'markup': float(markup)
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': f'Error al actualizar markup: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
