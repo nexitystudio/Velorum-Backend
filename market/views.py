@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from django.core.cache import cache
 from django.utils import timezone
+from .telegram import send_order_paid_notification
 
 # Create your views here.
 
@@ -1051,7 +1052,7 @@ def create_mp_preference(request):
             direccion_completa += f", Piso {shipping_data['piso']}"
         if shipping_data.get('departamento'):
             direccion_completa += f", Depto {shipping_data['departamento']}"
-        direccion_completa += f", {shipping_data.get('ciudad', '')}, {shipping_data.get('provincia', '')} - CP: {shipping_data.get('codigo_postal', '')}"
+        direccion_completa += f", {shipping_data.get('ciudad', '')}, {shipping_data.get('provincia', '')}"
         
         # Crear orden con todos los datos de envío y pago
         order_data = {
@@ -1060,13 +1061,13 @@ def create_mp_preference(request):
             'estado': 'pendiente',
             'costo_envio': costo_envio,
             'codigo_postal': shipping_data.get('codigo_postal', ''),
-            'zona_envio': shipping_data.get('zona', ''),
+            'zona_envio': shipping_data.get('zona_envio', ''),
             'metodo_pago': 'Mercado Pago',
-            # Datos del invitado
-            'email_invitado': customer_data.get('email') if not request.user.is_authenticated else None,
-            'nombre_invitado': customer_data.get('nombre') if not request.user.is_authenticated else None,
-            'apellido_invitado': customer_data.get('apellido') if not request.user.is_authenticated else None,
-            'telefono_invitado': customer_data.get('telefono_contacto') if not request.user.is_authenticated else None,
+            # Datos del invitado / checkout: siempre guardar lo que llegó del checkout; si falta, fallback al perfil
+            'email_invitado': (customer_data.get('email') or (request.user.email if request.user.is_authenticated else '')).strip(),
+            'nombre_invitado': (customer_data.get('nombre') or (request.user.first_name if request.user.is_authenticated else '')).strip(),
+            'apellido_invitado': (customer_data.get('apellido') or (request.user.last_name if request.user.is_authenticated else '')).strip(),
+            'telefono_invitado': (customer_data.get('telefono_contacto') or (getattr(request.user, 'phone', None) or getattr(request.user, 'telefono', '') if request.user.is_authenticated else '')).strip(),
             'detalles_input': [{
                 'watch_id': item.get('watch_id') or item.get('id_backend') or item.get('id'),
                 'cantidad': item.get('quantity', 1),
@@ -1157,6 +1158,9 @@ def mercadopago_webhook(request):
                     order.save()
                     
                     # Crear o actualizar registro de pago
+                    existing_pay = Pay.objects.filter(pedido=order, external_id=str(payment_info['payment_id'])).first()
+                    previous_estado = existing_pay.estado if existing_pay else None
+
                     pay, created = Pay.objects.get_or_create(
                         pedido=order,
                         external_id=str(payment_info['payment_id']),
@@ -1181,8 +1185,23 @@ def mercadopago_webhook(request):
                             'mp_payment_id': payment_info['payment_id']
                         })
                         pay.save()
-                    
+
                     logger.info(f"Orden {order_id} actualizada: {payment_info['status']}, Pay {'creado' if created else 'actualizado'}")
+
+                    # Notificar a Telegram solo si el estado pasó a 'completado'
+                    try:
+                        should_notify = False
+                        if pay_estado == 'completado':
+                            if created:
+                                should_notify = True
+                            else:
+                                if previous_estado != 'completado':
+                                    should_notify = True
+
+                        if should_notify:
+                            send_order_paid_notification(order)
+                    except Exception:
+                        logger.exception('Error al enviar notificación a Telegram')
                     
                 except Order.DoesNotExist:
                     logger.error(f"Orden {order_id} no encontrada")
