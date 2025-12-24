@@ -211,11 +211,11 @@ class ProductViewSet(viewsets.ModelViewSet):
 class CodigoDescuentoViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestionar códigos de descuento.
-    Solo administradores pueden crear, editar y eliminar códigos.
+    Administradores y operadores pueden crear, editar y eliminar códigos.
     """
     queryset = CodigoDescuento.objects.all()
     serializer_class = CodigoDescuentoSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminOrOperator]
     
     def get_queryset(self):
         """Ordena por fecha de creación descendente"""
@@ -857,11 +857,11 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAdminOrOperator])
 def manual_sync_products(request):
     """
     Endpoint para sincronización manual de productos externos.
-    Solo accesible por administradores.
+    Accesible por administradores y operadores.
     
     POST /api/products/sync-external/
     

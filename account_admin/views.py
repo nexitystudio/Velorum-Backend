@@ -242,10 +242,10 @@ def change_password(request):
 @api_view(['GET', 'PUT', 'PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated])
 def manage_user(request, user_id):
-    """Gestionar usuarios - Solo admins pueden modificar otros usuarios"""
+    """Gestionar usuarios - Admins y operadores pueden gestionar usuarios"""
     try:
-        # Verificar que el usuario actual es admin
-        if not (request.user.role == 'admin' or request.user.is_superuser):
+        # Verificar que el usuario actual es admin u operador
+        if not (request.user.role in ['admin', 'operator'] or request.user.is_superuser):
             return Response(
                 {'error': 'No tienes permisos para gestionar otros usuarios'}, 
                 status=status.HTTP_403_FORBIDDEN
@@ -304,8 +304,14 @@ def manage_user(request, user_id):
                         status=status.HTTP_400_BAD_REQUEST
                     )
             
-            # Validar rol si se está cambiando
+            # Validar rol si se está cambiando (solo admins pueden cambiar roles)
             if 'role' in data:
+                if request.user.role != 'admin' and not request.user.is_superuser:
+                    return Response(
+                        {'error': 'Solo administradores pueden cambiar roles'}, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
                 valid_roles = ['admin', 'operator', 'client']
                 if data['role'] not in valid_roles:
                     return Response(
@@ -359,7 +365,12 @@ def manage_user(request, user_id):
             return Response(updated_data, status=status.HTTP_200_OK)
         
         elif request.method == 'DELETE':
-            # Eliminar usuario
+            # Eliminar usuario (solo admins)
+            if request.user.role != 'admin' and not request.user.is_superuser:
+                return Response(
+                    {'error': 'Solo administradores pueden eliminar usuarios'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
             
             # Prevenir que el admin se elimine a sí mismo
             if target_user.id == request.user.id:
@@ -402,10 +413,10 @@ def manage_user(request, user_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def list_users(request):
-    """Listar todos los usuarios - Solo para admins"""
+    """Listar todos los usuarios - Para admins y operadores"""
     try:
-        # Verificar que el usuario actual es admin
-        if not (request.user.role == 'admin' or request.user.is_superuser):
+        # Verificar que el usuario actual es admin u operador
+        if not (request.user.role in ['admin', 'operator'] or request.user.is_superuser):
             return Response(
                 {'error': 'No tienes permisos para ver la lista de usuarios'}, 
                 status=status.HTTP_403_FORBIDDEN
